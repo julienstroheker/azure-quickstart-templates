@@ -1,4 +1,4 @@
-﻿configuration CreateADPDC 
+configuration CreateADPDC 
 { 
    param 
    ( 
@@ -21,6 +21,7 @@
     {
         LocalConfigurationManager 
         {
+            ActionAfterReboot   = 'ContinueConfiguration'
             RebootNodeIfNeeded = $true
         }
 
@@ -100,6 +101,38 @@
             SysvolPath = "F:\SYSVOL"
 	        DependsOn = @("[xDisk]ADDataDisk", "[WindowsFeature]ADDSInstall")
         } 
+
+        xWaitForADDomain DC1Forest
+        {
+            DomainName           = $DomainName
+            DomainUserCredential = $DomainCreds
+            RetryCount           = 15
+            RetryIntervalSec     = 60
+            DependsOn = "[xADDomain]FirstDS"
+        } 
+
+        xADRecycleBin RecycleBin
+        {
+            EnterpriseAdministratorCredential = $DomainCreds
+            ForestFQDN                        = $DomainName
+            DependsOn = '[xWaitForADDomain]DC1Forest'
+        }
+
+        Script ResetDNS
+        {
+            DependsOn = '[xADRecycleBin]RecycleBin'
+            GetScript = {@{Name='DNSServers';Address={Get-DnsClientServerAddress -InterfaceAlias Ethernet* | foreach ServerAddresses}}}
+            SetScript = {Set-DnsClientServerAddress -InterfaceAlias Ethernet* -ResetServerAddresses -Verbose}
+            TestScript = {Get-DnsClientServerAddress -InterfaceAlias Ethernet* -AddressFamily IPV4 | 
+                            Foreach {! ($_.ServerAddresses -contains '127.0.0.1')}}
+        }
+
+        # Need to make sure the DC reboots after it is promoted.
+        xPendingReboot RebootForPromo
+        {
+            Name      = 'RebootForDJoin'
+            DependsOn = '[Script]ResetDNS'
+        }
 
    }
 } 
